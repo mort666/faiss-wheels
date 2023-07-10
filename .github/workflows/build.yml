@@ -11,24 +11,23 @@ on:
 jobs:
   build_sdist:
     name: Build sdist
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
         with:
           submodules: true
 
-      - uses: actions/setup-python@v3
+      - uses: actions/setup-python@v2
         with:
           python-version: '3.x'
 
-      - name: Apply patch
-        run: cd faiss && git apply ../patch/faiss-rename-swigfaiss.patch && cd ..
-
       - name: Build sdist
-        run: python setup.py sdist
+        run: |
+          mv faiss/faiss/python/swigfaiss.swig faiss/faiss/python/swigfaiss.i
+          python setup.py sdist
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v2
         with:
           path: ./dist/*.tar.gz
 
@@ -37,56 +36,58 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-20.04, windows-2019, macos-10.15]
         arch: [auto64]
         gpu: [OFF]
-        opt_level: [avx2]
         include:
-          - os: windows-latest
-            arch: auto64
-            gpu: OFF
-            opt_level: generic
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             arch: aarch64
             gpu: OFF
-            opt_level: generic
-          - os: macos-latest
+          - os: macos-10.15
             arch: arm64
             gpu: OFF
-            opt_level: generic
+          - os: ubuntu-20.04
+            arch: auto64
+            gpu: ON
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
         with:
           submodules: true
 
       - name: Set up QEMU
         if: runner.os == 'Linux' && matrix.arch != 'auto64'
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v1
         with:
           platforms: arm64
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.11.2
+        uses: pypa/cibuildwheel@v2.1.1
         env:
+          CIBW_SKIP: pp*
           CIBW_ARCHS: ${{ matrix.arch }}
-          CIBW_ENVIRONMENT_LINUX: >
-            FAISS_OPT_LEVEL=${{ matrix.opt_level }}
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+          CIBW_ENVIRONMENT: >
+            FAISS_OPT_LEVEL=generic
             FAISS_ENABLE_GPU=${{ matrix.gpu }}
           CIBW_ENVIRONMENT_MACOS: >
-            FAISS_OPT_LEVEL=${{ matrix.opt_level }}
             TARGET_ARCH=${{ matrix.arch }}
             LIBOMP_USE_HIDDEN_HELPER_TASK=0
             LIBOMP_NUM_HIDDEN_HELPER_THREADS=0
           CIBW_ENVIRONMENT_WINDOWS: >
-            FAISS_OPT_LEVEL=${{ matrix.opt_level }}
             CMAKE_PREFIX_PATH="c:\\opt"
             PATH="${PATH};${CONDA}\\condabin;${CONDA}\\Library\\bin"
             LIB="${LIB};${CMAKE_PREFIX_PATH}\\lib;${CONDA}\\Library\\lib"
             CPATH="${CPATH};${CMAKE_PREFIX_PATH}\\include;${CONDA}\\Library\\include"
           CIBW_BEFORE_ALL: bash scripts/build_${{ runner.os }}.sh
+          CIBW_BEFORE_BUILD_WINDOWS: pip install delvewheel
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: delvewheel repair -v -w {dest_dir} {wheel}
+          CIBW_TEST_REQUIRES: pytest scipy
+          CIBW_TEST_COMMAND: >
+            python -m pytest {project}/faiss/tests --deselect=faiss/tests/test_contrib.py::TestComputeGT::test_compute_GT
+          CIBW_TEST_SKIP: "*-macosx_arm64 *-manylinux_aarch64"
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v2
         with:
           path: ./wheelhouse/*.whl
 
@@ -96,12 +97,12 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'release' && github.event.action == 'published'
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v2
         with:
           name: artifact
           path: dist
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@v1.4.2
         with:
           user: ${{ secrets.PYPI_USERNAME }}
           password: ${{ secrets.PYPI_PASSWORD }}
